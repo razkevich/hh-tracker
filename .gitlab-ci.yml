@@ -1,0 +1,358 @@
+## Pipeline stages
+stages:
+  - package
+  - test
+  - report
+  - deploy
+
+#############################
+## Jobs for build stage
+#############################
+
+package-docker-image:
+  stage: package
+  needs: []
+  image:
+    name: quay.io/elasticpath/executor:v1.6.0-debug
+    entrypoint: [""]
+  variables:
+    EP_DOCKER_REGISTRY_HOST: quay.io
+    DOCKER_REGISTRY_NAMESPACE: elasticpath
+    DOCKER_IMAGE_NAME: personal-data.svc
+    DOCKER_IMAGE_TAG_HASH: ${CI_COMMIT_SHA}-${CI_JOB_ID}
+    DOCKER_IMAGE_TAG_BRANCH: ${CI_COMMIT_REF_SLUG}
+    DOCKER_AUTH_CONFIG: |
+      {"auths":{"${EP_DOCKER_REGISTRY_HOST}":{"auth":"${QUAY_DOCKER_AUTH_ELASTICPATH}"}}}
+  before_script:
+    # Set Docker registry authentication
+    - mkdir -p /kaniko/.docker
+    - echo ${DOCKER_AUTH_CONFIG} > /kaniko/.docker/config.json
+  script:
+    - /kaniko/executor
+      --context ${CI_PROJECT_DIR}
+      --dockerfile ${CI_PROJECT_DIR}/Dockerfile
+      --destination ${EP_DOCKER_REGISTRY_HOST}/${DOCKER_REGISTRY_NAMESPACE}/${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG_HASH}
+      --destination ${EP_DOCKER_REGISTRY_HOST}/${DOCKER_REGISTRY_NAMESPACE}/${DOCKER_IMAGE_NAME}:${DOCKER_IMAGE_TAG_BRANCH}
+      --build-arg CREATED=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+      --build-arg VERSION=${DOCKER_IMAGE_TAG_HASH}
+      --build-arg TITLE=${DOCKER_IMAGE_NAME}
+      --build-arg REVISION=${CI_COMMIT_SHA}
+
+    - echo "PIPELINE_APP_REGISTRY_HOST=${EP_DOCKER_REGISTRY_HOST}" > docker-build.env
+    - echo "PIPELINE_APP_REGISTRY_NAMESPACE=${DOCKER_REGISTRY_NAMESPACE}" >> docker-build.env
+    - echo "PIPELINE_APP_IMAGE_NAME=${DOCKER_IMAGE_NAME}" >> docker-build.env
+    - echo "PIPELINE_APP_IMAGE_TAG_HASH=${DOCKER_IMAGE_TAG_HASH}" >> docker-build.env
+    - echo "PIPELINE_APP_IMAGE_TAG_BRANCH=${DOCKER_IMAGE_TAG_BRANCH}" >> docker-build.env
+  artifacts:
+    reports:
+      ## GitLab CI will automatically set environment variables from this file into jobs that downloads artifacts of this job
+      dotenv: docker-build.env
+
+############################
+# Jobs for test stage
+############################
+
+lint-golang:
+  stage: test
+  needs: []
+  image: quay.io/elasticpath/lang-go:1.17-15181b2a-710043
+  variables:
+    DOCKER_AUTH_CONFIG: |
+      {"auths":{"quay.io":{"auth":"${QUAY_DOCKER_AUTH_ELASTICPATH}"}}}
+    ## Go configuration
+    GOOS: linux
+    GOARCH: amd64
+    CGO_ENABLED: 0
+  before_script:
+    ## Download and install golangci-lint
+    - wget -O /tmp/golangci-lint.tar.gz https://github.com/golangci/golangci-lint/releases/download/v1.39.0/golangci-lint-1.39.0-linux-amd64.tar.gz
+    - tar -C /tmp/ -xzf /tmp/golangci-lint.tar.gz --strip 1
+    - install /tmp/golangci-lint /usr/bin/
+  script:
+    - golangci-lint --verbose run --timeout 2m
+
+lint-test-scripts:
+  stage: test
+  needs: []
+  image: quay.io/elasticpath/lang-node:14.16-4c0b1aa2-222246
+  variables:
+    DOCKER_AUTH_CONFIG: |
+      {"auths":{"quay.io":{"auth":"${QUAY_DOCKER_AUTH_ELASTICPATH}"}}}
+  before_script:
+    - cd component-tests
+    - yarn install
+  script:
+    - yarn lint
+    - yarn format
+
+unit-tests:
+  stage: test
+  needs: []
+  image: quay.io/elasticpath/lang-go:1.17-15181b2a-710043
+  variables:
+    DOCKER_AUTH_CONFIG: |
+      {"auths":{"quay.io":{"auth":"${QUAY_DOCKER_AUTH_ELASTICPATH}"}}}
+
+    # Go configuration
+    GOOS: linux
+    GOARCH: amd64
+    CGO_ENABLED: 0
+
+  before_script:
+    ## Download and install gotestsum
+    - wget -O /tmp/gotestsum.tar.gz https://github.com/gotestyourself/gotestsum/releases/download/v1.6.1/gotestsum_1.6.1_linux_amd64.tar.gz
+    - tar -C /tmp/ -xzf /tmp/gotestsum.tar.gz
+    - install /tmp/gotestsum /usr/bin/
+
+    - mkdir -p build/reports
+    - go mod download
+  script:
+    - gotestsum --junitfile build/reports/unit-tests-junit-results.xml -- -covermode=count -coverprofile=build/reports/c_unit.out ./... -coverpkg=./...
+    - go tool cover -html=build/reports/c_unit.out -o build/reports/c_unit.html
+  artifacts:
+    when: always
+    expire_in: 3 days
+    name: ${CI_PROJECT_PATH_SLUG}-${CI_COMMIT_REF_SLUG}-${CI_PIPELINE_ID}-${CI_JOB_NAME}
+    paths:
+      - build/reports
+    reports:
+      junit:
+        - build/reports/unit-tests-junit-results.xml
+
+.component-tests:
+  stage: test
+  tags:
+    - region:us-west-2
+    - tier:t3.xlarge
+    - docker:privileged
+  image: quay.io/elasticpath/docker:20.10.7-dind
+  variables:
+    EP_DOCKER_REGISTRY_HOST: quay.io
+    DOCKER_REGISTRY_NAMESPACE: elasticpath
+    DOCKER_AUTH_CONFIG: |
+      {"auths":{"https://index.docker.io/v1/":{"auth":"${DOCKERHUB_DOCKER_AUTH}"},"${EP_DOCKER_REGISTRY_HOST}":{"auth":"${QUAY_DOCKER_AUTH_ELASTICPATH}"}}}
+    DOCKER_DRIVER: overlay2
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_HOST: "unix:///var/run/docker.sock"
+    COMPONENT_TEST_TIMEOUT: 120
+  before_script:
+    - mkdir component-tests/report/
+    # Start docker in the background
+    - dockerd -H unix:///var/run/docker.sock > docker-logs.txt 2>&1 &
+    # Remove the following two lines after this is merged: https://elasticpath.atlassian.net/browse/DEVOPS-2817
+    - echo 524288 >> /proc/sys/fs/inotify/max_user_watches
+    - echo 65535 >> /proc/sys/fs/inotify/max_queued_events
+    - mkdir -p $HOME/.docker
+    - echo $DOCKER_AUTH_CONFIG > $HOME/.docker/config.json
+    - apk --no-cache add yarn=~1 nodejs=~14 make=~4 docker-compose=~1 moreutils=~0
+    # Check if docker is up
+    - docker ps || sleep 2 || docker ps
+  artifacts:
+    when: always
+    expire_in: 3 days
+    name: ${CI_PROJECT_PATH_SLUG}-${CI_COMMIT_REF_SLUG}-${CI_PIPELINE_ID}-${CI_JOB_NAME}
+    paths:
+      - docker-logs.txt
+      - docker-compose-logs.txt
+      - component-tests/report
+    reports:
+      junit:
+        - component-tests/report/component-tests-report.xml
+  timeout: 10 minutes
+
+component-tests-dev:
+  needs: []
+  extends: .component-tests
+  script:
+    - docker-compose up --build -d
+    - yarn --cwd component-tests install | ts
+    - yarn --cwd component-tests test || exit_code=$?
+    - docker-compose -f docker-compose.yml logs --no-color > docker-compose-logs.txt
+    - if [ $exit_code -ne 0 ]; then echo "Tests failed"; exit $exit_code; fi;
+
+component-tests-prod:
+  needs:
+    - job: package-docker-image
+  extends: .component-tests
+  variables:
+    PERSONAL_DATA_IMAGE: ${PIPELINE_APP_REGISTRY_HOST}/${PIPELINE_APP_REGISTRY_NAMESPACE}/${PIPELINE_APP_IMAGE_NAME}:${PIPELINE_APP_IMAGE_TAG_HASH}
+  script:
+    # Use the production build
+    - docker-compose pull
+    - docker-compose up -d --no-build
+    - yarn --cwd component-tests install | ts
+    - yarn --cwd component-tests test || exit_code=$?
+    - docker-compose -f docker-compose.yml logs --no-color > docker-compose-logs.txt
+    - if [ $exit_code -ne 0 ]; then echo "Tests failed"; exit $exit_code; fi;
+
+#############################
+## Jobs for report stage
+#############################
+
+code-coverage-report:
+  stage: report
+  needs:
+    - unit-tests
+  image: quay.io/elasticpath/gitlab-ci-helper:1ba71632e8c4d6bfbb0abc1c7b53377e33d4c7ae-6050
+  variables:
+    DOCKER_AUTH_CONFIG: |
+      {"auths":{"quay.io":{"auth":"${QUAY_DOCKER_AUTH_ELASTICPATH}"}}}
+  script:
+    ## https://docs.codeclimate.com/docs/configuring-test-coverage#parallel-tests
+    ## The Code Climate test reporter can join parallelized test reports,
+    ## combining them into one individual test report that can be submitted to Code Climate.
+
+    ## Run format-coverage on the reports from each parallelized instance.
+    - cc-test-reporter format-coverage build/reports/c_unit.out --input-type gocov --prefix gitlab.elasticpath.com/commerce-cloud/personal-data.svc/ --output c_unit.json
+
+    ## Run sum-coverage to combine the parallelized test reports into one unified report.
+    - cc-test-reporter sum-coverage --parts 1 c_unit.json --output c_total.json
+
+    ## Run show-coverage to print out coverage info in the CI log; this can be used by GitLab for consuming coverage info
+    - cc-test-reporter show-coverage c_total.json
+  artifacts:
+    expire_in: 3 days
+    name: ${CI_PROJECT_PATH_SLUG}-${CI_COMMIT_REF_SLUG}-${CI_PIPELINE_ID}-${CI_JOB_NAME}
+    paths:
+      - c_total.json
+
+code-quality-scan:
+  stage: report
+  needs: []
+  tags:
+    - region:us-west-2
+    - tier:t3.xlarge
+    - docker:privileged
+  image: quay.io/elasticpath/docker:20.10.7
+  services:
+    - name: quay.io/elasticpath/docker:20.10.7-dind
+      alias: docker
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_AUTH_CONFIG: |
+      {"auths":{"https://index.docker.io/v1/":{"auth":"${DOCKERHUB_DOCKER_AUTH}"},"quay.io":{"auth":"${QUAY_DOCKER_AUTH_ELASTICPATH}"}}}
+    DOCKER_DRIVER: overlay2
+    DOCKER_TLS_CERTDIR: ""
+  before_script:
+    # Configure Docker
+    - mkdir $HOME/.docker
+    - echo "${DOCKER_AUTH_CONFIG}" > $HOME/.docker/config.json
+    - mkdir .docker
+    - echo "${DOCKER_AUTH_CONFIG}" > .docker/config.json
+    # Configure build
+    - mkdir build
+  script:
+    - docker run
+      --env CODECLIMATE_CODE="$PWD"
+      --volume "$PWD":/code
+      --volume /var/run/docker.sock:/var/run/docker.sock
+      --volume /tmp/cc:/tmp/cc
+      --volume "$PWD/.docker/config.json":/root/.docker/config.json
+      quay.io/elasticpath/codeclimate:0.85.24 analyze --format json > build/gl-code-quality-report.json
+  artifacts:
+    expire_in: 3 days
+    name: ${CI_PROJECT_PATH_SLUG}-${CI_COMMIT_REF_SLUG}-${CI_PIPELINE_ID}-${CI_JOB_NAME}
+    paths:
+      - build/gl-code-quality-report.json
+    reports:
+      codequality:
+        - build/gl-code-quality-report.json
+
+whitesource-scan:
+  stage: report
+  needs:
+    - job: package-docker-image
+      artifacts: false
+  image: quay.io/elasticpath/ep-wss-unified-agent:22.4.1-ubuntu-zulu11.0.6-golang1.17.10
+  variables:
+    DOCKER_AUTH_CONFIG: |
+      {"auths":{"quay.io":{"auth":"${QUAY_DOCKER_AUTH_ELASTICPATH}"}}}
+    # WhiteSource configurations
+    WS_APIKEY: ${WHITESOURCE_API_KEY_COMMERCECLOUD}
+    WS_USERKEY: ${WHITESOURCE_USER_KEY_COMMERCECLOUD}
+    WS_PRODUCTVERSION: ${CI_COMMIT_BRANCH}
+  script:
+    - java -jar /opt/whitesource/wss-unified-agent.jar
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
+container-vulnerability-scan:
+  stage: report
+  needs:
+    - package-docker-image
+  image:
+    name: quay.io/sysdig/secure-inline-scan:2
+    entrypoint: [""]
+  variables:
+    DOCKER_AUTH_CONFIG: |
+      {"auths":{"quay.io":{"auth":"${QUAY_DOCKER_AUTH_ELASTICPATH}"}}}
+    SYSDIG_TOKEN: ${SYSDIGSECURE_API_TOKEN_ELASTICPATH}
+    SYSDIG_URL: https://us2.app.sysdig.com
+    SERVICE_IMAGE: ${PIPELINE_APP_REGISTRY_HOST}/${PIPELINE_APP_REGISTRY_NAMESPACE}/${PIPELINE_APP_IMAGE_NAME}:${PIPELINE_APP_IMAGE_TAG_BRANCH}
+  allow_failure:
+    exit_codes:
+      - 0
+      - 1
+  before_script:
+    # Save docker registry authentication
+    - mkdir ${HOME}/.docker
+    - echo "${DOCKER_AUTH_CONFIG}" > ${HOME}/.docker/config.json
+    # Create reports directory
+    - mkdir container-scan-reports
+  script:
+    # Execute sysdig scanner and save the returning exit code
+    - /sysdig-inline-scan.sh
+      --sysdig-url ${SYSDIG_URL}
+      --sysdig-token ${SYSDIG_TOKEN}
+      --registry-auth-file ${HOME}/.docker/config.json
+      --time-profile
+      --report-folder container-scan-reports
+      --write-json container-scan-reports/sysdig-scan-results.json
+      ${SERVICE_IMAGE}
+  artifacts:
+    expire_in: 3 days
+    when: always
+    name: ${CI_PROJECT_PATH_SLUG}-${CI_COMMIT_REF_SLUG}-${CI_PIPELINE_ID}-${CI_JOB_NAME}
+    expose_as: Container scan report
+    paths:
+      - container-scan-reports/
+
+#############################
+## Jobs for deploy stage
+#############################
+
+promote-to-integration:
+  stage: deploy
+  needs:
+    - package-docker-image
+    - job: lint-golang
+      artifacts: false
+    - job: lint-test-scripts
+      artifacts: false
+    - job: unit-tests
+      artifacts: false
+    - job: component-tests-dev
+      artifacts: false
+    - job: component-tests-prod
+      artifacts: false
+    - job: whitesource-scan
+      artifacts: false
+    - job: code-quality-scan
+      artifacts: false
+    - job: code-coverage-report
+      artifacts: false
+    - job: container-vulnerability-scan
+      artifacts: false
+  variables:
+    SERVICE_NAME: personal-data
+    SERVICE_CONTAINER_REGISTRY: ${PIPELINE_APP_REGISTRY_HOST}
+    SERVICE_REGISTRY_NAMESPACE: ${PIPELINE_APP_REGISTRY_NAMESPACE}
+    SERVICE_IMAGE_NAME: ${PIPELINE_APP_IMAGE_NAME}
+    SERVICE_IMAGE_TAG: ${PIPELINE_APP_IMAGE_TAG_HASH}
+    SERVICE_COMMIT_TITLE: ${CI_COMMIT_TITLE}
+    SERVICE_CHANGE_DETAILS: ${CI_PROJECT_URL}/commit/${CI_COMMIT_SHA}
+    DEPLOYMENT_ENVIRONMENT: integration
+  trigger:
+    project: commerce-cloud/epcc-k8s-modifier
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"

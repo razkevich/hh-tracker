@@ -1,0 +1,11 @@
+build/
+component-tests/report/*
+!component-tests/report/.gitkeep
+internal/service/bridge/pactconsumer/output/*
+!internal/service/bridge/pactconsumer/output/logs.gitkeep
+!internal/service/bridge/pactconsumer/output/pacts.gitkeep
+node_modules
+coverage.out
+cmd/app/app
+.docker
+.idea

@@ -4,8 +4,6 @@ import (
 	"context"
 	"github.com/rs/zerolog/log"
 	mongo "gitlab.elasticpath.com/commerce-cloud/personal-data.svc/internal/driver"
-	"gitlab.elasticpath.com/commerce-cloud/personal-data.svc/internal/messaging/bus"
-	"gitlab.elasticpath.com/commerce-cloud/personal-data.svc/internal/messaging/consumer"
 	"net/http"
 	"os"
 	"os/signal"
@@ -17,26 +15,20 @@ import (
 // App provides the context to run the application.
 type App struct {
 	server      *http.Server
-	consumer    *consumer.Consumer
 	mongoClient *mongo.Client
 	quit        chan (struct{})
 	shutdown    chan (struct{})
-	messageBus  bus.IMessageBus
 }
 
 // ProvideApp is a wire provider
 func ProvideApp(
 	server *http.Server,
 	mongoClient *mongo.Client,
-	consumer *consumer.Consumer,
-	messageBus bus.IMessageBus,
 ) *App {
 
 	return &App{
 		server:      server,
-		consumer:    consumer,
 		mongoClient: mongoClient,
-		messageBus:  messageBus,
 	}
 }
 
@@ -57,12 +49,6 @@ func (app *App) supervisor() {
 	if err := app.mongoClient.Close(); err != nil {
 		log.Error().Err(err).Msg("failed to disconnect from database")
 	}
-	app.consumer.Stop()
-	log.Debug().Msg("disconnected from database")
-	if err := app.messageBus.Disconnect(); err != nil {
-		log.Error().Err(err).Msg("failed to disconnect from message bus")
-	}
-	log.Debug().Msg("disconnected from message bus")
 	close(app.shutdown)
 }
 
@@ -96,13 +82,11 @@ func (app *App) connect(services map[string]func() error) {
 // Start starts the application running until a shutdown signal is received
 func (app *App) Start() {
 	app.connect(map[string]func() error{
-		"database":    app.mongoClient.Connect,
-		"message bus": app.messageBus.Connect,
+		"database": app.mongoClient.Connect,
 	})
 
 	log.Debug().Msg("starting message relay")
 	log.Debug().Msg("starting consumer queue")
-	go app.consumer.Run()
 
 	app.shutdown = make(chan struct{})
 	app.quit = make(chan struct{})

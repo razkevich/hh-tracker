@@ -31,8 +31,6 @@ var (
 	ErrPageLimitExceed = errors.New("page limit has been exceeded enforced limitation")
 	// ErrSvcNotAvailable is returned when service is not available
 	ErrSvcNotAvailable = errors.New("service not available")
-	// ErrCannotConnectRabbit is returned when no connection with RabbitMQ can be established
-	ErrCannotConnectRabbit = errors.New("could not connect to a rabbit host")
 	// ErrPublishTimeout is returned when publishing a message timeout
 	ErrPublishTimeout = errors.New("timeout during publish")
 	// ErrPublish is returned if there is an error while publishing

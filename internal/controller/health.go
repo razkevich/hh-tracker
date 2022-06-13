@@ -7,7 +7,6 @@ import (
 	mongo "gitlab.elasticpath.com/commerce-cloud/personal-data.svc/internal/driver"
 	"gitlab.elasticpath.com/commerce-cloud/personal-data.svc/internal/health"
 	"gitlab.elasticpath.com/commerce-cloud/personal-data.svc/internal/internalerrors"
-	"gitlab.elasticpath.com/commerce-cloud/personal-data.svc/internal/messaging/bus"
 	"net/http"
 )
 
@@ -15,15 +14,13 @@ import (
 type HealthController struct {
 	health      health.IHealth
 	mongoClient *mongo.Client
-	messageBus  bus.IMessageBus
 }
 
 // ProvideHealthController is the wire function for checks HealthController.
-func ProvideHealthController(health health.IHealth, mongoClient *mongo.Client, messageBus bus.IMessageBus) HealthController {
+func ProvideHealthController(health health.IHealth, mongoClient *mongo.Client) HealthController {
 	return HealthController{
 		health:      health,
 		mongoClient: mongoClient,
-		messageBus:  messageBus,
 	}
 }
 

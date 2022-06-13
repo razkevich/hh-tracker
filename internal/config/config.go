@@ -7,7 +7,6 @@ import (
 	"gitlab.elasticpath.com/commerce-cloud/personal-data.svc/internal"
 	"gitlab.elasticpath.com/commerce-cloud/personal-data.svc/internal/controller"
 	mongo "gitlab.elasticpath.com/commerce-cloud/personal-data.svc/internal/driver"
-	"gitlab.elasticpath.com/commerce-cloud/personal-data.svc/internal/messaging/bus/rabbit"
 	"gitlab.elasticpath.com/commerce-cloud/personal-data.svc/internal/middleware"
 	"gitlab.elasticpath.com/commerce-cloud/personal-data.svc/internal/service"
 )
@@ -19,7 +18,6 @@ var Providers = wire.NewSet(
 	ProvideServerConfig,
 	ProvideControllerConfig,
 	ProvideServiceConfig,
-	ProvideRabbitConfig,
 	ProvideMiddlewareConfig,
 	ProvideMongoConfig,
 )
@@ -56,14 +54,6 @@ func ProvideControllerConfig(e Env) controller.ControllerConfig {
 // ProvideServiceConfig returns a Service Config struct populated from environment variables for use by wire
 func ProvideServiceConfig(e Env) (*service.ServiceConfig, error) {
 	return &service.ServiceConfig{}, nil
-}
-
-// ProvideRabbitConfig returns a rabbit Config struct populated from environment variables for use by wire
-func ProvideRabbitConfig(e Env) rabbit.Config {
-	return rabbit.Config{
-		Hosts: e.RabbitHosts,
-		Queue: e.RabbitQueue,
-	}
 }
 
 // ProvideMongoConfig returns a mongo Config struct populated from environment variables for use by wire

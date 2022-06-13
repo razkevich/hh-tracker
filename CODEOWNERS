@@ -1,0 +1,6 @@
+[Team Super]
+* @users-epcc-super
+
+^[Release Engineers]
+.gitlab-ci.yml @Jake.Lin @Parvez.Akkas
+.gitlab/ci/* @Jake.Lin @Parvez.Akkas

@@ -1,0 +1,8 @@
+version: "2.3"
+services:
+  personal-data-prepare:
+    build:
+      context: .
+      dockerfile: Dockerfile.prepare
+    volumes:
+      - ./../:/src/gitlab.elasticpath.com/commerce-cloud/personal-data.svc

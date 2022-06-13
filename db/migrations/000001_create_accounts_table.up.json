@@ -1,0 +1,17 @@
+[
+  {
+    "createIndexes": "log",
+    "indexes": [
+      {
+        "key": {
+          "store_id": 1,
+          "id": 1,
+          "_id": 1
+        },
+        "name": "log_index",
+        "background": true,
+        "unique": true
+      }
+    ]
+  }
+]

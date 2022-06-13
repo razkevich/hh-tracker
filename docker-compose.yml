@@ -1,0 +1,77 @@
+version: "2.3"
+networks:
+  default:
+    name: personal-data-local-development
+volumes:
+      gopath:
+      pgdata:
+services:
+  personal-data:
+    image: ${PERSONAL_DATA_IMAGE:-personal-data.svc}
+    build:
+      context: .
+      dockerfile: ${PERSONAL_DATA_DOCKERFILE:-Dockerfile.development}
+    hostname: personal-data
+    container_name: personal-data
+    environment:
+      SVC_PORT: '8000'
+      SVC_BASE_URL: 'http://localhost:8057'
+      MONGO_DSN: 'mongodb://mongo:27017/personal_data?ssl=false'
+      MONGO_TIMEOUT: 5000
+      MONGO_DATABASE_NAME: 'personal_data'
+      LOGGING_LEVEL: 'debug'
+      RABBIT_HOSTS: ${RABBIT_HOSTS:-amqp://guest:guest@host.docker.internal:5675}
+      ENFORCE_LIMITS: 'true'
+      RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}
+    mem_limit: 1024m
+    volumes:
+      - ./:/src/gitlab.elasticpath.com/commerce-cloud/personal-data.svc
+      - gopath:/go
+    ports:
+      - '8057:8000'
+      - '2545:2345'
+    depends_on:
+      mongo:
+        condition: service_started
+      rabbit:
+        condition: service_started
+
+  mongo:
+    image: 'mongo:4.4'
+    ports:
+      - '57017:27017'
+    healthcheck:
+      test: >
+        mongo --quiet "localhost/test" --eval 'quit(db.runCommand({ ping: 1}).ok ? 0 : 2)'
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    environment: { }
+    depends_on: { }
+    mem_limit: 1024m
+    networks:
+      default:
+        aliases:
+          - mongo
+          - db.mongo.3.6
+          - mongo-atlas.3.6
+
+  wiremock:
+    image: rodolpheche/wiremock:2.26.0
+    ports:
+      - 8581:8080
+    healthcheck:
+      test: |
+        curl -f http://localhost:8581
+
+  rabbit:
+    image: 'rabbitmq:3.6-management-alpine'
+    ports:
+      - '5675:5672'
+      - '15676:15672'
+    healthcheck:
+      test: |
+        rabbitmqctl status
+      interval: 30s
+      timeout: 5s
+      retries: 3

@@ -1,0 +1,17 @@
+#!/bin/bash -e
+
+echo "building the image started"
+docker-compose -f docker-prepare/docker-compose-prepare.yml build
+echo "building the image ended"
+
+echo "running linting and formatting fixes on component tests started"
+docker-compose -f docker-prepare/docker-compose-prepare.yml run personal-data-prepare yarn --cwd component-tests lint-fix && yarn --cwd component-tests format-fix
+echo "running linting and formatting fixes on component tests ended"
+
+echo "running gofmt started"
+docker-compose -f docker-prepare/docker-compose-prepare.yml run personal-data-prepare gofmt -s -w .
+echo "running gofmt end"
+
+echo "running golangci-lint started"
+docker run --rm -v $(pwd):/app -w /app golangci/golangci-lint:v1.39.0 golangci-lint run -v
+echo "running golangci-lint ended"

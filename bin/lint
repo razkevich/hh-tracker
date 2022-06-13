@@ -1,0 +1,7 @@
+#!/bin/bash -e
+
+golangci-lint run
+if which yarn > /dev/null ; then
+	yarn --cwd component-tests lint
+	yarn --cwd component-tests format
+fi

@@ -1,0 +1,6 @@
+#!/bin/bash
+
+yarn --cwd component-tests install && \
+yarn --cwd component-tests lint && \
+yarn --cwd component-tests format && \
+yarn --cwd component-tests test

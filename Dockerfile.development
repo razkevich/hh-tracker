@@ -1,0 +1,36 @@
+ARG MIGRATE_VERSION=v4.13.0
+ARG CREATED
+ARG REVISION
+ARG TITLE
+ARG VERSION
+
+FROM migrate/migrate:${MIGRATE_VERSION} as migrate_image
+FROM quay.io/elasticpath/lang-go:1.16-e67ebccd-35388
+
+ENV GOPATH=/go
+
+RUN apk add --no-cache bash=~5 git gcc musl-dev
+
+RUN go get github.com/go-delve/delve/cmd/dlv
+RUN go get github.com/cespare/reflex
+
+# MetaData
+LABEL org.opencontainers.image.vendor="Elastic Path Software Inc."
+LABEL org.opencontainers.image.source="https://gitlab.elasticpath.com/commerce-cloud/personal-data.svc"
+LABEL org.opencontainers.image.title=$TITLE
+LABEL org.opencontainers.image.description="This Docker image contains a development version of the Personal data service of Elastic Path Commerce Cloud application."
+LABEL org.opencontainers.image.created=$CREATED
+LABEL org.opencontainers.image.version=dev-$VERSION
+LABEL org.opencontainers.image.revision=$REVISION
+
+RUN mv /go/bin/dlv /go/bin/reflex /
+
+# migrations
+RUN mkdir -p ./db
+COPY ./db /db
+COPY ./entrypoint-dev.sh /
+COPY --from=migrate_image /usr/local/bin/migrate /migrate
+RUN chmod +x /migrate
+RUN chmod +x /entrypoint-dev.sh
+
+ENTRYPOINT ["/entrypoint-dev.sh"]

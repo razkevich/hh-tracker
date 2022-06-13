@@ -1,0 +1,8 @@
+FROM quay.io/elasticpath/lang-go:1.16-e67ebccd-35388
+ENV GOPATH=/go
+
+RUN apk --no-cache add git curl nodejs npm
+RUN npm install -g yarn
+ENV PATH=/go/bin:$PATH
+RUN mkdir -p /src/gitlab.elasticpath.com/commerce-cloud/personal-data.svc
+WORKDIR /src/gitlab.elasticpath.com/commerce-cloud/personal-data.svc
